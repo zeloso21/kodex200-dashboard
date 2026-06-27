@@ -1,0 +1,33 @@
+name: Update KODEX 200 Data
+
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'  # 평일 오후 5시 KST (UTC 08:00)
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pykrx pandas
+
+      - name: Fetch KODEX 200 data
+        run: python fetch_data.py
+
+      - name: Commit and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add data.json
+          git diff --staged --quiet || git commit -m "data: update KODEX 200 $(date +%Y-%m-%d)"
+          git push
