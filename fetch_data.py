@@ -7,7 +7,7 @@ def date_str(d):
 
 def main():
     today = datetime.now()
-    from_dt = today - timedelta(days=366)
+    from_dt = today - timedelta(days=365*5 + 2)
 
     fromdate = from_dt.strftime('%Y%m%d')
     todate = today.strftime('%Y%m%d')
