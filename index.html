@@ -524,6 +524,9 @@ function computeSignal() {
   const box = document.getElementById('signalBody');
   const DRIFT_WIN = 60;
   const MA_WIN = 200;
+  const VOL_WIN = 40;
+  const SHOCK_VOL_SCALE_THR = 2.5;
+  const SHOCK_MOVE_THR = 0.15;
   if (ALL.length < DRIFT_WIN + MA_WIN + 30) { box.textContent = '데이터가 부족합니다.'; return; }
 
   const logret = [];
@@ -545,12 +548,28 @@ function computeSignal() {
   const todayClose = closes[closes.length - 1];
   const aboveMA = todayClose > ma200;
 
+  // 변동성배수·당일 등락률 가드 (2026-08-01 추가 — 몬테카를로 밴드와 동일 변동성배수 계산을 재사용해서,
+  // 밴드 신뢰도가 떨어지는 국면(변동성배수 상한 근접) 및 극단적 단일일 움직임에서는 진입을 보류)
+  const std = (arr) => {
+    const m = arr.reduce((s, x) => s + x, 0) / arr.length;
+    const v = arr.reduce((s, x) => s + (x - m) * (x - m), 0) / (arr.length - 1);
+    return Math.sqrt(v);
+  };
+  const rvFull = std(logret) * Math.sqrt(252);
+  const rvRecent = std(logret.slice(-VOL_WIN)) * Math.sqrt(252);
+  const volScale = Math.max(0.3, Math.min(3, rvRecent / rvFull));
+  const volOk = volScale < SHOCK_VOL_SCALE_THR;
+  const todayRet = closes[closes.length - 1] / closes[closes.length - 2] - 1;
+  const moveOk = Math.abs(todayRet) < SHOCK_MOVE_THR;
+
   const driftOk = todayDrift > median;
-  const isBuy = driftOk && aboveMA;
+  const isBuy = driftOk && aboveMA && volOk && moveOk;
   const lastDate = ALL[ALL.length - 1].d;
   const todayPct = (todayDrift * 100).toFixed(3);
   const medianPct = (median * 100).toFixed(3);
   const maGapPct = ((todayClose / ma200 - 1) * 100).toFixed(2);
+  const volScaleStr = volScale.toFixed(2);
+  const todayRetPct = (todayRet * 100).toFixed(2);
 
   const badge = isBuy
     ? `<span style="display:inline-block;padding:6px 14px;border-radius:6px;background:#d1fae5;color:#065f46;font-weight:700;font-size:14px">🟢 오버나잇 진입 신호</span>`
@@ -558,7 +577,11 @@ function computeSignal() {
 
   let reason;
   if (isBuy) {
-    reason = `최근 60일 추세(일평균 ${todayPct}%)가 과거 중앙값(${medianPct}%)보다 높고, 종가가 200일 이동평균보다 ${maGapPct}% 위(장기 상승 국면)에 있습니다 — 백테스트상 두 조건을 함께 만족할 때 오버나잇(종가매수→익일시가매도) 진입이 가장 유리했습니다.`;
+    reason = `최근 60일 추세(일평균 ${todayPct}%)가 과거 중앙값(${medianPct}%)보다 높고, 종가가 200일 이동평균보다 ${maGapPct}% 위(장기 상승 국면)에 있으며, 변동성배수(${volScaleStr}x)와 당일 등락률(${todayRetPct}%) 모두 정상 범위입니다 — 백테스트상 이 조건들을 함께 만족할 때 오버나잇(종가매수→익일시가매도) 진입이 가장 유리했습니다.`;
+  } else if (!moveOk) {
+    reason = `당일 등락률이 ${todayRetPct}%로 극단치(±${(SHOCK_MOVE_THR * 100).toFixed(0)}% 이상)입니다 — 급등 뒤 추격매수·급락 당일 진입 위험을 피하기 위해 관망을 권장합니다(2026-08-01 추가: 7/31 +24% 폭등일 추격매수 사례를 계기로 도입).`;
+  } else if (!volOk) {
+    reason = `변동성배수가 ${volScaleStr}x로 상한(3.0x) 근접(≥${SHOCK_VOL_SCALE_THR}x)입니다 — 이 구간에서는 몬테카를로 예측 밴드 자체의 신뢰도가 크게 떨어진다는 게 백테스트로 확인되어 관망을 권장합니다.`;
   } else if (!aboveMA) {
     reason = `종가가 200일 이동평균보다 ${maGapPct}% 아래(장기 하락 국면)입니다 — 단기 추세와 무관하게, 장기 하락장에서는 오버나잇 진입을 쉬는 것이 백테스트상 유리했습니다(2022년 하락장 손실 회피 효과 확인).`;
   } else {
@@ -569,7 +592,7 @@ function computeSignal() {
     <div style="margin-bottom:10px">${badge}</div>
     <div style="line-height:1.7">${reason}</div>
     <div style="margin-top:8px;font-family:monospace;font-size:11px;color:var(--muted)">
-      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
+      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 변동성배수 ${volScaleStr}x · 당일등락률 ${todayRetPct}% · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
     </div>`;
 }
 
