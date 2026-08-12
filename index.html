@@ -772,13 +772,14 @@ function runSimulation() {
     }
   });
 
+  const vsClose = (v) => `<span style="color:var(--muted);font-size:11px">(${fmtPct((v / lastClose - 1) * 100)})</span>`;
   const rows = horizons.map(h => `
     <tr>
       <td style="font-weight:600">${h.label}</td>
-      <td>${fmt(h.high.p90)}원</td>
-      <td>${fmt(h.high.p50)}원</td>
-      <td>${fmt(h.low.p50)}원</td>
-      <td>${fmt(h.low.p10)}원</td>
+      <td>${fmt(h.high.p90)}원 ${vsClose(h.high.p90)}</td>
+      <td>${fmt(h.high.p50)}원 ${vsClose(h.high.p50)}</td>
+      <td>${fmt(h.low.p50)}원 ${vsClose(h.low.p50)}</td>
+      <td>${fmt(h.low.p10)}원 ${vsClose(h.low.p10)}</td>
     </tr>`).join('');
 
   document.getElementById('mcTblWrap').innerHTML = `
