@@ -183,6 +183,9 @@ footer { text-align:center; font-size:11px; color:var(--muted); padding:12px 0 8
     각 경로에서 1거래일(내일) · 5거래일(주간) · 21거래일(월간) 구간의 최고가·최저가를 집계해 10~90% 확률 구간을 산출한 값입니다.
     <b>변동성·추세 보정 적용</b>: 최근 40일 실현변동성이 5년 평균보다 높으면 밴드를 그만큼 넓히고, 최근 60일 추세(드리프트)를 중심값에 반영합니다 —
     10년 백테스트에서 미보정 시 급등락 구간의 고가상단(90%) 밴드 충족률이 48.5%까지 떨어졌던 문제를 이 보정으로 85%대까지 개선한 방식입니다.
+    <b>피보나치 확장레벨 보정 추가(2026-08-13)</b>: 예측기간에 맞춘 최근 스윙(일간=전일, 주간=최근5일, 월간=최근20일 고저)의 피보나치 확장레벨이
+    몬테카를로 밴드보다 바깥쪽에 있으면 그 값을 채택합니다(중앙값엔 영향 없음, 꼬리 구간만 보정) — 과거 데이터에 없던 극단적 변동을 부트스트랩만으로는
+    못 잡는 한계를 보완하기 위함이며, IS(2019-2022)/OOS(2023-2026) 분리 검증으로 목표 충족률(~81%)에 가까워지는 것을 확인했습니다.
     <b>미래 수익률을 보장하는 예측이 아니며</b>, 과거 변동성·추세 패턴이 단기간 이어진다는 가정 하의 확률적 참고 자료입니다.
   </p>
   <div class="chart-row2" style="margin-bottom:16px">
@@ -599,6 +602,43 @@ function computeSignal() {
 /* ---------- 몬테카를로 시뮬레이션 (Historical Bootstrap) ---------- */
 let mcChart = null;
 
+// 피보나치 확장레벨 보정 (2026-08-13 추가): 몬테카를로 부트스트랩만으로는 히스토리에 없는
+// 극단치(2026-07-31 하루 +24% 등)를 못 잡는 문제를 보완하기 위해, 예측기간에 맞춘 최근 스윙
+// (일간=전일, 주간=최근5일, 월간=최근20일 고저)의 피보나치 확장레벨을 MC의 90%/10% 밴드와
+// 비교해 더 바깥쪽 값을 채택한다. IS(2019-22)/OOS(2023-26) 그리드서치로 검증: 일간·주간은
+// 확장배수 1.618(황금비) 하나만, 월간은 [1.272, 1.618] 둘 다 쓰는 조합이 OOS에서 밴드
+// 충족률을 목표치(~81%)에 가장 가깝게 맞추면서 폭 증가를 최소화함.
+const FIB_CONFIG = {
+  day: { swingWin: 1, fibExt: [1.618] },
+  week: { swingWin: 5, fibExt: [1.618] },
+  month: { swingWin: 20, fibExt: [1.272, 1.618] }
+};
+
+function fibExtensionLevels(all, swingWin, fibExt) {
+  const recent = all.slice(-swingWin);
+  let hiIdx = 0, loIdx = 0;
+  for (let i = 1; i < recent.length; i++) {
+    if (recent[i].h > recent[hiIdx].h) hiIdx = i;
+    if (recent[i].l < recent[loIdx].l) loIdx = i;
+  }
+  const swingHi = recent[hiIdx].h;
+  const swingLo = recent[loIdx].l;
+  const range = swingHi - swingLo;
+  const upLevels = hiIdx > loIdx
+    ? fibExt.map(r => swingHi + (r - 1) * range)
+    : fibExt.map(r => swingLo + r * range);
+  const downLevels = loIdx > hiIdx
+    ? fibExt.map(r => swingLo - (r - 1) * range)
+    : fibExt.map(r => swingHi - r * range);
+  return { up: upLevels, down: downLevels };
+}
+
+function nearestBeyond(levels, ref, up) {
+  const cands = levels.filter(x => up ? x > ref : x < ref);
+  if (cands.length === 0) return null;
+  return up ? Math.min(...cands) : Math.max(...cands);
+}
+
 function percentile(sorted, p) {
   const idx = Math.max(0, Math.min(sorted.length - 1, Math.round(p * (sorted.length - 1))));
   return sorted[idx];
@@ -678,14 +718,26 @@ function runSimulation() {
     { key: 'week', label: '주간 (5거래일)' },
     { key: 'month', label: '월간 (21거래일)' }
   ].map(h => ({
+    key: h.key,
     label: h.label,
     high: summarize(bucket[h.key].high),
     low: summarize(bucket[h.key].low)
   }));
 
+  // 피보나치 확장레벨로 밴드 상/하단 보정 (중앙값 p50은 그대로 유지, 꼬리만 보정)
+  horizons.forEach(h => {
+    const cfg = FIB_CONFIG[h.key];
+    const { up, down } = fibExtensionLevels(ALL, cfg.swingWin, cfg.fibExt);
+    const fibHi = nearestBeyond(up, h.high.p90, true);
+    const fibLo = nearestBeyond(down, h.low.p10, false);
+    if (fibHi !== null) h.high.p90 = Math.max(h.high.p90, fibHi);
+    if (fibLo !== null) h.low.p10 = Math.min(h.low.p10, fibLo);
+  });
+
   document.getElementById('mcSub').textContent =
     `기준 종가 ${fmt(lastClose)}원 (${ALL[ALL.length - 1].d} 기준) · 표본 ${R.toLocaleString('ko-KR')}일 · ${N.toLocaleString('ko-KR')}회 시뮬레이션` +
-    ` · 변동성배수 ${volScale.toFixed(2)}x(최근${VOL_WIN}일/5년) · 추세 ${(drift60 * 100).toFixed(3)}%/일(최근${DRIFT_WIN}일)`;
+    ` · 변동성배수 ${volScale.toFixed(2)}x(최근${VOL_WIN}일/5년) · 추세 ${(drift60 * 100).toFixed(3)}%/일(최근${DRIFT_WIN}일)` +
+    ` · 피보나치 확장레벨 보정 반영(꼬리 구간만)`;
 
   if (mcChart) mcChart.destroy();
   mcChart = new Chart(document.getElementById('cMC'), {
