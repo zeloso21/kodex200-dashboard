@@ -567,7 +567,12 @@ function computeSignal() {
   const moveOk = Math.abs(todayRet) < SHOCK_MOVE_THR;
 
   const driftOk = todayDrift > median;
-  const isBuy = driftOk && aboveMA && volOk && moveOk;
+  // 2026-08-31: 변동성배수(volOk) 조건을 isBuy 판정에서 제외함 — 5년 백테스트+최근 40거래일
+  // 실측으로, 이 조건이 "그날의 위험"이 아니라 "최근 국면의 실현변동성이 구조적으로 높아진 상태"에
+  // 반응해 정상적인 상승 국면에서도 몇 달씩 진입을 막는 문제를 확인함. moveOk(당일등락<15%)만으로도
+  // 7/31(+24.17%) 같은 진짜 극단치는 그대로 걸러짐. volScale/volOk는 참고용 진단 지표로 계속 표시만
+  // 함(kodex200_overnight_agent.py의 compute_signal()과 반드시 동일하게 유지할 것).
+  const isBuy = driftOk && aboveMA && moveOk;
   const lastDate = ALL[ALL.length - 1].d;
   const todayPct = (todayDrift * 100).toFixed(3);
   const medianPct = (median * 100).toFixed(3);
@@ -581,11 +586,9 @@ function computeSignal() {
 
   let reason;
   if (isBuy) {
-    reason = `최근 60일 추세(일평균 ${todayPct}%)가 과거 중앙값(${medianPct}%)보다 높고, 종가가 200일 이동평균보다 ${maGapPct}% 위(장기 상승 국면)에 있으며, 변동성배수(${volScaleStr}x)와 당일 등락률(${todayRetPct}%) 모두 정상 범위입니다 — 백테스트상 이 조건들을 함께 만족할 때 오버나잇(종가매수→익일시가매도) 진입이 가장 유리했습니다.`;
+    reason = `최근 60일 추세(일평균 ${todayPct}%)가 과거 중앙값(${medianPct}%)보다 높고, 종가가 200일 이동평균보다 ${maGapPct}% 위(장기 상승 국면)에 있으며, 당일 등락률(${todayRetPct}%)도 정상 범위입니다 — 백테스트상 이 조건들을 함께 만족할 때 오버나잇(종가매수→익일시가매도) 진입이 가장 유리했습니다.`;
   } else if (!moveOk) {
     reason = `당일 등락률이 ${todayRetPct}%로 극단치(±${(SHOCK_MOVE_THR * 100).toFixed(0)}% 이상)입니다 — 급등 뒤 추격매수·급락 당일 진입 위험을 피하기 위해 관망을 권장합니다(2026-08-01 추가: 7/31 +24% 폭등일 추격매수 사례를 계기로 도입).`;
-  } else if (!volOk) {
-    reason = `변동성배수가 ${volScaleStr}x로 상한(3.0x) 근접(≥${SHOCK_VOL_SCALE_THR}x)입니다 — 이 구간에서는 몬테카를로 예측 밴드 자체의 신뢰도가 크게 떨어진다는 게 백테스트로 확인되어 관망을 권장합니다.`;
   } else if (!aboveMA) {
     reason = `종가가 200일 이동평균보다 ${maGapPct}% 아래(장기 하락 국면)입니다 — 단기 추세와 무관하게, 장기 하락장에서는 오버나잇 진입을 쉬는 것이 백테스트상 유리했습니다(2022년 하락장 손실 회피 효과 확인).`;
   } else {
@@ -596,7 +599,7 @@ function computeSignal() {
     <div style="margin-bottom:10px">${badge}</div>
     <div style="line-height:1.7">${reason}</div>
     <div style="margin-top:8px;font-family:monospace;font-size:11px;color:var(--muted)">
-      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 변동성배수 ${volScaleStr}x · 당일등락률 ${todayRetPct}% · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
+      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 당일등락률 ${todayRetPct}% · 변동성배수(참고용) ${volScaleStr}x · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
     </div>`;
 }
 
