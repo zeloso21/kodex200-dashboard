@@ -527,6 +527,7 @@ async function loadData() {
 function computeSignal() {
   const box = document.getElementById('signalBody');
   const DRIFT_WIN = 60;
+  const DRIFT_CLIP = 0.03;  // 급등락 보정: 드리프트 계산 시 일별 로그수익률을 ±3%로 winsor(클립)
   const MA_WIN = 200;
   const VOL_WIN = 40;
   const SHOCK_VOL_SCALE_THR = 2.5;
@@ -536,10 +537,17 @@ function computeSignal() {
   const logret = [];
   for (let i = 1; i < ALL.length; i++) logret.push(Math.log(ALL[i].c / ALL[i - 1].c));
 
-  // 과거 분포: 매일 시점의 "직전 60일 평균 로그수익률"을 전부 모아 중앙값 산출
+  // 급등락 보정 (2026-09-07): 드리프트(추세 방향) 계산에는 일별 로그수익률을 ±3%로 winsor(클립)한
+  // 값을 쓴다. 7/31 +24%·7/28 -11% 같은 극단일 서너 개가 60일 평균에 3개월씩 눌러앉아 신호를
+  // 좌우하던 문제 — 극단일 자체는 moveOk(당일등락 ±15%)가 이미 진입을 막으므로 방향 판정 왜곡만
+  // 걷어낸다. todayDrift와 과거 중앙값 문턱 양쪽에 동일 적용. 5년 백테스트로 ±2~4% 전 구간 개선
+  // 확인 후 ±3% 채택(kodex200_overnight_agent.py의 compute_signal()과 동일하게 유지할 것).
+  const logretW = logret.map(x => Math.max(-DRIFT_CLIP, Math.min(DRIFT_CLIP, x)));
+
+  // 과거 분포: 매일 시점의 "직전 60일 평균 로그수익률(winsor)"을 전부 모아 중앙값 산출
   const driftSeries = [];
-  for (let i = DRIFT_WIN; i <= logret.length; i++) {
-    const seg = logret.slice(i - DRIFT_WIN, i);
+  for (let i = DRIFT_WIN; i <= logretW.length; i++) {
+    const seg = logretW.slice(i - DRIFT_WIN, i);
     driftSeries.push(seg.reduce((s, x) => s + x, 0) / DRIFT_WIN);
   }
   const sortedDrift = [...driftSeries].sort((a, b) => a - b);
@@ -599,7 +607,7 @@ function computeSignal() {
     <div style="margin-bottom:10px">${badge}</div>
     <div style="line-height:1.7">${reason}</div>
     <div style="margin-top:8px;font-family:monospace;font-size:11px;color:var(--muted)">
-      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 당일등락률 ${todayRetPct}% · 변동성배수(참고용) ${volScaleStr}x · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
+      기준일 ${lastDate} · 최근60일 드리프트 ${todayPct}%/일(일별 ±3% 보정, 중앙값 ${medianPct}%/일) · 종가 vs 200일선 ${maGapPct}% · 당일등락률 ${todayRetPct}% · 변동성배수(참고용) ${volScaleStr}x · 표본 ${driftSeries.length.toLocaleString('ko-KR')}일
     </div>`;
 }
 
